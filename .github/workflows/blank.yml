@@ -14,34 +14,29 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Java 21
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
 
-      - name: Extract Flutter project
-        run: |
-          unzip -q NECNER_MOBILE_WORKSPACE_BRIDGE_V27.zip -d flutter_project
-
       - name: Find Flutter project
         run: |
-          PROJECT_DIR=$(dirname "$(find flutter_project -name pubspec.yaml -type f | head -n 1)")
+          PROJECT_DIR=$(find . -name pubspec.yaml -type f | head -n 1 | xargs -r dirname)
 
-          if [ -z "$PROJECT_DIR" ] || [ "$PROJECT_DIR" = "." ]; then
+          if [ -z "$PROJECT_DIR" ]; then
             echo "ERROR: pubspec.yaml not found"
-            echo "Contents of extracted project:"
-            find flutter_project -maxdepth 3 -type f | head -100
             exit 1
           fi
 
-          echo "PROJECT_DIR=$PROJECT_DIR" >> $GITHUB_ENV
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
           echo "Flutter project found at: $PROJECT_DIR"
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+          cache: true
 
       - name: Flutter Doctor
         working-directory: ${{ env.PROJECT_DIR }}
@@ -58,6 +53,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: necner-mobile-workspace-release-apk
+          name: necner-merchant-release-apk
           path: ${{ env.PROJECT_DIR }}/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error

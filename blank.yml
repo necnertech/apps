@@ -1,4 +1,4 @@
-name: Build NECNER Merchant V29 APK
+name: Build NECNER Merchant APK
 
 on:
   workflow_dispatch:
@@ -11,31 +11,56 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
+      # --------------------------------------------------
+      # 1. CHECKOUT
+      # --------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
 
+
+      # --------------------------------------------------
+      # 2. JAVA 21
+      # --------------------------------------------------
       - name: Setup Java 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "21"
 
+
+      # --------------------------------------------------
+      # 3. FIND PROJECT ZIP
+      # --------------------------------------------------
       - name: Find uploaded project ZIP
         shell: bash
         run: |
           set -e
 
-          ZIP_FILE=$(find . -maxdepth 1 -type f -iname "*.zip" -print -quit)
+          echo "===== REPOSITORY ROOT ====="
+          ls -lah
+
+          ZIP_FILE=$(find . -maxdepth 1 -type f -iname "*.zip" -print | head -n 1)
 
           if [ -z "$ZIP_FILE" ]; then
+            echo ""
             echo "ERROR: No ZIP file found in repository root."
+            echo ""
+            echo "Available files:"
             ls -lah
             exit 1
           fi
 
-          echo "Using project ZIP: $ZIP_FILE"
+          echo ""
+          echo "Using project ZIP:"
+          echo "$ZIP_FILE"
+
           echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
 
+
+      # --------------------------------------------------
+      # 4. EXTRACT PROJECT
+      # --------------------------------------------------
       - name: Extract project
         shell: bash
         run: |
@@ -44,65 +69,181 @@ jobs:
           rm -rf flutter_project
           mkdir -p flutter_project
 
+          echo "Extracting:"
+          echo "$ZIP_FILE"
+
           unzip -q "$ZIP_FILE" -d flutter_project
 
+          echo ""
+          echo "Extraction completed."
+
+
+      # --------------------------------------------------
+      # 5. FIND PUBSPEC
+      # --------------------------------------------------
       - name: Locate Flutter project
         shell: bash
         run: |
           set -e
 
-          PUBSPEC=$(find flutter_project -type f -name "pubspec.yaml" -print -quit)
+          PUBSPEC=$(find flutter_project \
+            -type f \
+            -name "pubspec.yaml" \
+            -print \
+            | head -n 1)
 
           if [ -z "$PUBSPEC" ]; then
+            echo ""
             echo "ERROR: pubspec.yaml was not found."
+            echo ""
+            echo "Extracted files:"
             find flutter_project -maxdepth 5 -type f | head -300
             exit 1
           fi
 
           PROJECT_DIR=$(dirname "$PUBSPEC")
 
-          echo "Flutter project: $PROJECT_DIR"
+          echo ""
+          echo "Flutter project found:"
+          echo "$PROJECT_DIR"
+
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-      - name: Setup Flutter 3.47.5
+
+      # --------------------------------------------------
+      # 6. SETUP FLUTTER
+      # --------------------------------------------------
+      - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           flutter-version: "3.47.5"
+          channel: stable
           cache: true
 
+
+      # --------------------------------------------------
+      # 7. SHOW FLUTTER VERSION
+      # --------------------------------------------------
+      - name: Flutter version
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          flutter --version
+          dart --version
+
+
+      # --------------------------------------------------
+      # 8. PREPARE ANDROID ENVIRONMENT
+      # --------------------------------------------------
       - name: Prepare Android environment
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
           set -e
 
-          # Remove the developer's Windows-only local paths.
+          echo "===== ANDROID ENVIRONMENT ====="
+
+          if [ ! -d "android" ]; then
+            echo "ERROR: android directory not found."
+            exit 1
+          fi
+
           rm -f android/local.properties
 
-          FLUTTER_ROOT="$(dirname "$(dirname "$(which flutter)")")"
+          FLUTTER_BIN="$(which flutter)"
+          FLUTTER_ROOT="$(dirname "$(dirname "$FLUTTER_BIN")")"
+
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "FLUTTER_ROOT=$FLUTTER_ROOT"
 
           cat > android/local.properties <<EOF
           sdk.dir=$ANDROID_HOME
           flutter.sdk=$FLUTTER_ROOT
           EOF
 
-          echo "Android SDK: $ANDROID_HOME"
-          echo "Flutter SDK: $FLUTTER_ROOT"
+          echo ""
+          echo "android/local.properties:"
+          cat android/local.properties
 
+
+      # --------------------------------------------------
+      # 9. FLUTTER DOCTOR
+      # --------------------------------------------------
       - name: Flutter doctor
         working-directory: ${{ env.PROJECT_DIR }}
-        run: flutter doctor -v
+        shell: bash
+        run: |
+          flutter doctor -v
 
+
+      # --------------------------------------------------
+      # 10. GET DEPENDENCIES
+      # --------------------------------------------------
       - name: Get dependencies
         working-directory: ${{ env.PROJECT_DIR }}
-        run: flutter pub get
+        shell: bash
+        run: |
+          set -e
 
+          echo "===== FLUTTER PUB GET ====="
+
+          flutter clean || true
+          flutter pub get
+
+
+      # --------------------------------------------------
+      # 11. DART SOURCE ANALYSIS
+      # IMPORTANT:
+      # This catches real Dart errors BEFORE APK build.
+      # --------------------------------------------------
+      - name: Check Dart source
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          set -e
+
+          echo ""
+          echo "========================================"
+          echo "       DART SOURCE ANALYSIS"
+          echo "========================================"
+          echo ""
+
+          dart analyze --no-fatal-infos
+
+          echo ""
+          echo "========================================"
+          echo "       DART ANALYSIS PASSED"
+          echo "========================================"
+
+
+      # --------------------------------------------------
+      # 12. BUILD RELEASE APK
+      # --------------------------------------------------
       - name: Build release APK
         working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
         run: |
-          flutter build apk --release \
+          set -e
+
+          echo ""
+          echo "========================================"
+          echo "          BUILDING RELEASE APK"
+          echo "========================================"
+          echo ""
+
+          flutter build apk \
+            --release \
             --android-skip-build-dependency-validation
 
+          echo ""
+          echo "========================================"
+          echo "          APK BUILD FINISHED"
+          echo "========================================"
+
+
+      # --------------------------------------------------
+      # 13. VERIFY APK
+      # --------------------------------------------------
       - name: Verify APK
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
@@ -111,17 +252,34 @@ jobs:
 
           APK="build/app/outputs/flutter-apk/app-release.apk"
 
+          echo ""
+          echo "Checking APK:"
+          echo "$APK"
+
           if [ ! -f "$APK" ]; then
+            echo ""
             echo "ERROR: APK was not generated."
+            echo ""
+            echo "Available APK files:"
+            find build -type f -name "*.apk" -print || true
             exit 1
           fi
 
-          echo "APK generated successfully:"
+          echo ""
+          echo "========================================"
+          echo "       APK GENERATED SUCCESSFULLY"
+          echo "========================================"
+          echo ""
+
           ls -lh "$APK"
 
+
+      # --------------------------------------------------
+      # 14. UPLOAD APK
+      # --------------------------------------------------
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NECNER-MERCHANT-V29-APK
+          name: NECNER-MERCHANT-APK
           path: ${{ env.PROJECT_DIR }}/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
